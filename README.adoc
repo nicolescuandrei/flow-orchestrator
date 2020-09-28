@@ -1,0 +1,163 @@
+= Flow orchestrator
+:toc:
+:toclevels:2
+
+== About
+=== Goal
+The goal of this framework is to manage a sequence of steps in a Spring MVC application, keeping the logical flow and
+preventing arbitrary transitions between pages.
+
+=== Characteristics
+
+- There is no need for a predefined step sequence.
+- Supports decisions nodes and parallel threads of executions. The decision-making process happens dynamically, depending on
+the business logic.
+- The next step is decided from the current step.
+- The application flow is managed through annotations, applied to the controllers methods.
+- Form submission uses Post/Redirect/Get(PRG) pattern
+
+=== Concept
+
+Flows with one or many decision nodes can be represented through a _directed graph_.
+Each _graph node_ represents a page path from the application flow. The _edges_ represent transitions between pages.
+
+== Implementation in a Spring MVC application
+=== Enable flow orchestrator
+Add _@EnableFlowOrchestrator_ annotation on a _@Configuration_ bean.
+
+[source,java]
+----
+@EnableFlowOrchestrator
+@SpringBootApplication
+public class FlowOrchestratorDemoApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(FlowOrchestratorDemoApplication.class, args);
+    }
+
+}
+
+----
+
+=== Flow management
+
+Each page of an Spring MVC application has an associated path. These paths represents the _nodes_ from the following examples.
+
+In order to implement the flow orchestrator, a node should be defined for each page of the flow. All nodes must have an associated controller.
+
+[source,java]
+----
+public class Node {
+
+    private Node() {
+    }
+
+    public static final String A = "/a";
+    public static final String B = "/b";
+
+}
+
+----
+
+Add the defined nodes as _@RequestMapping_ values on the controllers.
+
+[source,java]
+----
+@Controller
+@RequestMapping(Node.A)
+public class A {
+}
+----
+
+The application flow is controlled through the following annotations: `@CheckAccess`, `@MarkNextNodeAsAccessible`, and `@ResetFlow`.
+
+* `@CheckAccess` annotation can be applied only on the controller methods, annotated with `@GetMapping` or `@PostMapping`. The methods marked with `@CheckAccess` can be executed only if the flow stack contains the current node, defined in the controller `@RequestMapping` annotation.  If the flow stack does not contain the current node, a `NodeAccessException` is thrown.
+`NodeAccessException` contains an error message and the head of the flow stack(last accessible node).
+
+[IMPORTANT]
+====
+Each application should decide how to handle the `NodeAccessException`.  One way of handling is to catch it in a _ExceptionHandler_ method and then perform a redirect to the last accessible node.
+====
+
+[source,java]
+----
+@Controller
+@RequestMapping(Node.A)
+public class A {
+
+    @CheckAccess
+    @GetMapping
+    public String display(Model model) {
+
+        return "a";
+    }
+}
+----
+
+* `@MarkNextNodeAsAccessible` annotation can be applied only on the controller methods, annotated with `@GetMapping` or `@PostMapping`. The methods annotated with `@MarkNextNodeAsAccessible` must return the next node. Under the hood, the next node is extracted from the returned value and is added to the flow stack.
+
+[IMPORTANT]
+====
+Make sure the returned value from the controller method starts with _redirect:_ followed by the next node.
+====
+
+[source,java]
+----
+@Controller
+@RequestMapping(Node.A)
+public class A {
+
+    @MarkNextNodeAsAccessible
+    @CheckAccess
+    @PostMapping
+    public String submit(@Valid @ModelAttribute ViewDTO viewDTO) {
+        String nextNode = performBusinessLogic(viewDTO);
+
+        return "redirect:" + nextNode;
+    }
+}
+----
+
+* `@ResetFlow` annotation can be applied only on the controller methods, annotated with `@GetMapping`. After the method execution, the flow stack is reset.
+
+[source,java]
+----
+@Controller
+@RequestMapping(Node.A)
+public class A {
+
+    @ResetFlow
+    @GetMapping
+    public String display(Model model) {
+
+        return "a";
+    }
+}
+----
+
+.Recommended way to apply the flow orchestrator annotations by node type
+[%header,cols=4*]
+|===
+|{nbsp}|`@CheckAccess`|`@MarkNextNodeAsAccessible`|`@ResetFlow`
+|Starting nodes|{nbsp}|x|x
+|Inner nodes|x|x|{nbsp}
+|Ending nodes|x|{nbsp}|x
+|Error nodes|{nbsp}|{nbsp}|x
+|===
+
+.Usage of the flow orchestrator annotations by controller method types
+[%header,cols=4*]
+|===
+|{nbsp}|`@CheckAccess`|`@MarkNextNodeAsAccessible`|`@ResetFlow`
+|GET method|x|x|x
+|POST method|x|x|{nbsp}
+|===
+
+== Properties
+
+.Flow orchestrator properties
+[%header,cols=3*]
+|===
+|Property name|Default value|Description
+|flow-orchestrator.max-nodes|31|The maximum number of nodes that the flow execution can have. Provide a value high enough not to interfere with the user experience of normal users using the back button, but low enough to avoid excessive resource usage or denial of service attacks.
+|===
